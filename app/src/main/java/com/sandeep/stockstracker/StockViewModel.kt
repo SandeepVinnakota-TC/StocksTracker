@@ -1,17 +1,25 @@
 package com.sandeep.stockstracker
 
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.sandeep.stockstracker.data.PortfolioEntity
 import com.sandeep.stockstracker.data.SearchResultDto
 import com.sandeep.stockstracker.data.StockRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -21,18 +29,33 @@ class StockViewModel @Inject constructor(
     private val repository: StockRepository
 ) : ViewModel() {
 
-    val portfolio = repository.portfolio
+    // --- PORTFOLIO STATE ---
+
+    val portfolios = repository.portfolios
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    private val _selectedPortfolioId = MutableStateFlow<Int?>(null)
+    val selectedPortfolioId: StateFlow<Int?> = _selectedPortfolioId.asStateFlow()
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val portfolio = _selectedPortfolioId.flatMapLatest { id ->
+        if (id != null) {
+            repository.getStocksForPortfolio(id)
+        } else {
+            flowOf(emptyList())
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+
+    // --- UI STATE ---
 
     var searchResults by mutableStateOf<List<SearchResultDto>>(emptyList())
         private set
     var errorState by mutableStateOf<String?>(null)
         private set
-
     var toastMessage by mutableStateOf<String?>(null)
         private set
-
-    var apiCallsMade by mutableStateOf(0)
+    var apiCallsMade by mutableIntStateOf(0)
         private set
 
     val requestsLeft: Int
@@ -43,6 +66,28 @@ class StockViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             apiCallsMade = repository.getApiCallCount()
+        }
+
+        viewModelScope.launch {
+            repository.portfolios.collect { ports ->
+                if (ports.isEmpty()) {
+                    repository.createPortfolio("Main Portfolio")
+                } else if (_selectedPortfolioId.value == null) {
+                    _selectedPortfolioId.value = ports.first().id
+                }
+            }
+        }
+    }
+
+    // --- INTENTS (User Actions) ---
+
+    fun selectPortfolio(portfolioId: Int) {
+        _selectedPortfolioId.value = portfolioId
+    }
+
+    fun createNewPortfolio(name: String) {
+        viewModelScope.launch {
+            repository.createPortfolio(name)
         }
     }
 
@@ -57,7 +102,6 @@ class StockViewModel @Inject constructor(
             return
         }
 
-        // Pre-check: Don't search if limit is 0
         if (requestsLeft <= 0) {
             toastMessage = "Daily limit reached. Try again tomorrow."
             return
@@ -66,22 +110,25 @@ class StockViewModel @Inject constructor(
         searchJob = viewModelScope.launch {
             delay(500)
             try {
-                // Optimistically increment (will be corrected if limit hit)
                 incrementUsage()
-
                 val results = repository.searchStocks(query)
                 if (results.isEmpty()) {
                     toastMessage = "No stocks found for '$query'"
                 }
                 searchResults = results
-
             } catch (e: Exception) {
-                handleError(e) // <--- Use helper function
+                handleError(e)
             }
         }
     }
 
     fun selectStock(symbol: String, name: String) {
+        val currentPortfolioId = _selectedPortfolioId.value
+
+        if (currentPortfolioId == null) {
+            toastMessage = "Please select a portfolio first"
+            return
+        }
         if (requestsLeft <= 0) {
             toastMessage = "Daily limit reached. Try again tomorrow."
             return
@@ -91,8 +138,15 @@ class StockViewModel @Inject constructor(
             try {
                 errorState = null
                 searchResults = emptyList()
-                repository.addStock(symbol, name)
+
+                // Add to the specific portfolio
+                repository.addStockToPortfolio(symbol, name, currentPortfolioId)
+
+                // Fetch the price immediately so it doesn't stay at $0.0!
+                repository.refreshSingleStock(symbol)
                 incrementUsage()
+
+                toastMessage = "$symbol added and price updated!"
             } catch (e: Exception) {
                 handleError(e)
             }
@@ -103,40 +157,48 @@ class StockViewModel @Inject constructor(
         val currentList = portfolio.value
         if (currentList.isEmpty()) return
 
-        // FIX 2: Don't start refresh if we have no requests left
-        if (requestsLeft <= 0) {
-            toastMessage = "Daily limit reached. Try again tomorrow."
+        if (requestsLeft < currentList.size) {
+            toastMessage = "Not enough daily limit left to refresh all."
             return
         }
 
         viewModelScope.launch {
             try {
-                // Loop safely: Stop if we hit the limit mid-loop
-                for (stock in currentList) {
-                    if (requestsLeft <= 0) break // Stop loop if we just hit 0
-
-                    repository.refreshStock(stock) // You might need to update Repository to expose single refresh (see below)
+                currentList.forEach { stock ->
+                    repository.refreshSingleStock(stock.symbol)
                     incrementUsage()
                 }
+                toastMessage = "Portfolio updated"
             } catch (e: Exception) {
                 handleError(e)
             }
         }
     }
 
-    // --- HELPER FUNCTIONS ---
+    // NEW: Action called by the SwipeToDismiss UI
+    fun removeStock(symbol: String, portfolioId: Int) {
+        viewModelScope.launch {
+            try {
+                repository.removeStockFromPortfolio(symbol, portfolioId)
+                toastMessage = "$symbol removed"
+            } catch (e: Exception) {
+                toastMessage = "Failed to remove $symbol"
+            }
+        }
+    }
 
     private fun handleError(e: Exception) {
-        // FIX 1: Ignore cancellation errors (stops the bad toast)
         if (e is CancellationException) return
+        e.printStackTrace()
+        val errorMessage = e.message ?: "Unknown Error"
 
-        // FIX 2: If API says limit reached, force counter to 0 (max usage)
-        if (e.message?.contains("Limit Reached") == true) {
+        if (errorMessage.contains("500 calls per day") || errorMessage.contains("daily limit")) {
             apiCallsMade = 25
             toastMessage = "Daily API Limit Reached."
+        } else if (errorMessage.contains("frequency") || errorMessage.contains("call frequency")) {
+            toastMessage = "Please try after a minute."
         } else {
-            e.printStackTrace()
-            toastMessage = e.message ?: "An error occurred"
+            toastMessage = errorMessage
         }
     }
 

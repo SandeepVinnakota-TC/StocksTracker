@@ -1,5 +1,6 @@
 package com.sandeep.stockstracker.data
 
+import android.util.Log
 import kotlinx.coroutines.flow.Flow
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -11,60 +12,110 @@ class StockRepository @Inject constructor(
     private val dao: StockDao
 ) {
 
-    // 1. Get all stocks from the Database to show on screen
-    val portfolio: Flow<List<StockEntity>> = dao.getAllStocks()
+    // 1. Get all portfolios
+    val portfolios: Flow<List<PortfolioEntity>> = dao.getAllPortfolios()
 
-    // 2. Search for a stock (Network Call)
+    // 2. Get stocks for a SPECIFIC portfolio
+    fun getStocksForPortfolio(portfolioId: Int): Flow<List<StockEntity>> {
+        return dao.getStocksForPortfolio(portfolioId)
+    }
+
+    // 3. Create a new portfolio
+    suspend fun createPortfolio(name: String) {
+        dao.insertPortfolio(PortfolioEntity(name = name))
+    }
+
+    // 4. Search for a stock (Network Call)
     suspend fun searchStocks(query: String): List<SearchResultDto> {
         val response = api.search(query)
 
-        // Check if API said "Limit Reached"
+        // DEBUG LOG: Print what the API actually said
+        if (response.note != null) Log.e("STOCK_DEBUG", "API Note: ${response.note}")
+        if (response.information != null) Log.e("STOCK_DEBUG", "API Info: ${response.information}")
+
         if (response.note != null || response.information != null) {
+            Log.e("STOCK_DEBUG", "API Info: ${response.information}")
             throw Exception("Daily API Limit Reached (25/day).")
+        }
+
+        if (response.note != null || response.information != null) {
+            val msg = response.note ?: response.information ?: "Unknown API Limit"
+            throw Exception(msg)
         }
 
         return response.bestMatches ?: emptyList()
     }
 
-    // 3. Add a stock to portfolio (Network -> Database)
-    suspend fun addStock(symbol: String, companyName: String) {
-        val response = api.getQuote(symbol)
-
-        // SAFETY CHECK: Throw a clear error if data is missing
-        val quote = response.globalQuote ?: throw Exception("API Limit Reached or Invalid Stock")
-
+    // 5. Add a stock to portfolio
+    suspend fun addStockToPortfolio(symbol: String, companyName: String, portfolioId: Int) {
+        // 1. Save the stock into the main stock table
         val entity = StockEntity(
-            symbol = quote.symbol,
+            symbol = symbol,
             companyName = companyName,
-            price = quote.price.toDoubleOrNull() ?: 0.0,
-            changePercent = quote.changePercent,
-            previousClose = quote.previousClose.toDoubleOrNull() ?: 0.0,
+            price = 0.0, // Will be updated instantly by refreshBatch
+            changePercent = "0%",
+            previousClose = 0.0,
             lastFetchedTimestamp = System.currentTimeMillis()
         )
         dao.insertStock(entity)
+
+        // 2. Link the stock to the portfolio
+        val crossRef = PortfolioStocksCrossRef(
+            portfolioId,
+            symbol)
+        dao.insertStockIntoPortfolio(crossRef)
     }
 
-    // 4. Refresh a SINGLE stock (Used by ViewModel loop)
-    suspend fun refreshStock(stock: StockEntity) {
-        val response = api.getQuote(stock.symbol)
+    // 6. BATCH UPDATE
+    suspend fun refreshBatch(symbols: String) {
+        // 1. Call API
+        val response = api.getBatchQuotes(symbols = symbols)
 
-        // Check for limit error here too
-        if (response.globalQuote == null) {
-            throw Exception("Daily API Limit Reached.")
+        // DEBUG: Check for errors explicitly
+        if (response.note != null) Log.e("STOCK_DEBUG", "Batch Note: ${response.note}")
+        if (response.information != null) Log.e("STOCK_DEBUG", "Batch Info: ${response.information}")
+        if (response.errorMessage != null) Log.e("STOCK_DEBUG", "Batch Error: ${response.errorMessage}")
+
+        // 2. Validate
+        if (response.stockQuotes.isNullOrEmpty()) {
+            // DEBUG LOG for Batch
+            Log.e("STOCK_DEBUG", "Batch response empty. Symbols: $symbols")
+            return
         }
 
-        val quote = response.globalQuote
-        val updatedStock = stock.copy(
-            price = quote.price.toDoubleOrNull() ?: 0.0,
-            changePercent = quote.changePercent,
-            previousClose = quote.previousClose.toDoubleOrNull() ?: 0.0,
-            lastFetchedTimestamp = System.currentTimeMillis()
-        )
-        dao.insertStock(updatedStock)
+        // 3. Map API data to Database Entities
+        response.stockQuotes.forEach { quote ->
+            // Use the update query to preserve the Company Name
+            dao.updatePrice(
+                symbol = quote.symbol,
+                price = quote.price.toDoubleOrNull() ?: 0.0,
+                change = quote.changePercent,
+                prevClose = quote.previousClose.toDoubleOrNull() ?: 0.0,
+                time = System.currentTimeMillis()
+            )
+        }
     }
 
-    // --- USAGE TRACKING (For the Counter) ---
+    suspend fun refreshSingleStock(symbol: String) {
+        val response = api.getQuote(symbol)
 
+        val quote = response.globalQuote
+        if (quote == null || quote.symbol.isEmpty()) {
+            Log.e("STOCK_DEBUG", "Empty quote returned for $symbol")
+            return
+        }
+
+        // Update the database with the fresh price!
+        dao.updatePrice(
+            symbol = quote.symbol,
+            price = quote.price.toDoubleOrNull() ?: 0.0,
+            change = quote.changePercent,
+            prevClose = quote.previousClose.toDoubleOrNull() ?: 0.0,
+            time = System.currentTimeMillis()
+        )
+    }
+
+    // --- USAGE TRACKING ---
     suspend fun incrementApiCallCount() {
         val today = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
         val currentStats = dao.getUsageStats()
@@ -88,4 +139,9 @@ class StockRepository @Inject constructor(
             0
         }
     }
+
+    suspend fun removeStockFromPortfolio(symbol: String, portfolioId: Int) {
+        dao.removeStockFromPortfolio(portfolioId, symbol)
+    }
+
 }

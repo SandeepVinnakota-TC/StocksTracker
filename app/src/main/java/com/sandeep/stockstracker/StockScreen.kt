@@ -28,106 +28,124 @@ fun StockScreen(
     viewModel: StockViewModel = viewModel()
 ) {
     // 1. Observe Data
-    val portfolio by viewModel.portfolio.collectAsState()
+    val portfolios by viewModel.portfolios.collectAsState()
+    val selectedPortfolioId by viewModel.selectedPortfolioId.collectAsState()
+    val portfolioStocks by viewModel.portfolio.collectAsState()
     val searchResults = viewModel.searchResults
     val error = viewModel.errorState
-
-    // 2. Get the Requests Count from ViewModel
     val requestsLeft = viewModel.requestsLeft
 
-    var showDialog by remember { mutableStateOf(false) }
+    // Dialog states
+    var showSearchDialog by remember { mutableStateOf(false) }
+    var showNewPortfolioDialog by remember { mutableStateOf(false) }
 
-    // 3. Generate Time (Updates when portfolio updates)
-    val lastUpdatedTime = remember(portfolio) {
+    val lastUpdatedTime = remember(portfolioStocks) {
         val dateFormat = SimpleDateFormat("hh:mm a", Locale.getDefault())
         dateFormat.format(Date())
     }
 
-    // Observe Toast Message
     val context = LocalContext.current
     val toastMessage = viewModel.toastMessage
 
-    // Show Toast when message changes
     LaunchedEffect(toastMessage) {
         if (toastMessage != null) {
             Toast.makeText(context, toastMessage, Toast.LENGTH_SHORT).show()
-            viewModel.clearToast() // Reset so it can show again later
+            viewModel.clearToast()
         }
     }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         floatingActionButton = {
-            FloatingActionButton(onClick = { showDialog = true }) {
-                Icon(imageVector = Icons.Default.Add, contentDescription = "Search")
+            FloatingActionButton(onClick = { showSearchDialog = true }) {
+                Icon(imageVector = Icons.Default.Add, contentDescription = "Add Stock")
             }
         }
     ) { innerPadding ->
-
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(16.dp)
         ) {
-            // Header Title
+            // --- HEADER ---
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
-            ){
-                Text(text = "My Portfolio", fontSize = 28.sp, fontWeight = FontWeight.Bold)
+            ) {
+                Text(text = "Portfolios", fontSize = 28.sp, fontWeight = FontWeight.Bold)
                 IconButton(onClick = { viewModel.refreshPortfolio() }) {
                     Icon(imageVector = Icons.Default.Refresh, contentDescription = "Refresh")
                 }
             }
 
-            // --- INFO ROW (Time Left | Requests Right) ---
+            // --- PORTFOLIO TABS ---
+            if (portfolios.isNotEmpty()) {
+                val selectedIndex = portfolios.indexOfFirst { it.id == selectedPortfolioId }.coerceAtLeast(0)
+
+                ScrollableTabRow(
+                    selectedTabIndex = selectedIndex,
+                    edgePadding = 16.dp,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    portfolios.forEachIndexed { index, portfolio ->
+                        Tab(
+                            selected = selectedIndex == index,
+                            onClick = { viewModel.selectPortfolio(portfolio.id) },
+                            text = { Text(portfolio.name, fontWeight = FontWeight.SemiBold) }
+                        )
+                    }
+                    // The "+ New" Tab to create a portfolio
+                    Tab(
+                        selected = false,
+                        onClick = { showNewPortfolioDialog = true },
+                        text = { Text("+ New", color = MaterialTheme.colorScheme.primary) }
+                    )
+                }
+            }
+
+            // --- INFO ROW ---
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween, // Pushes items to edges
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Left: Time
-                Text(
-                    text = "Last Updated: $lastUpdatedTime",
-                    fontSize = 12.sp,
-                    color = Color.Gray
-                )
-
-                // Right: Requests Left
-                // Color changes to Red if requests are low (< 5)
+                Text(text = "Last Updated: $lastUpdatedTime", fontSize = 12.sp, color = Color.Gray)
                 val limitColor = if (requestsLeft < 5) Color.Red else Color.Gray
                 Text(
                     text = "Requests Left: $requestsLeft",
                     fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold, // Made bold to see easily
+                    fontWeight = FontWeight.Bold,
                     color = limitColor
                 )
             }
 
             if (error != null) {
-                Text(text = error!!, color = Color.Red, modifier = Modifier.padding(bottom = 8.dp))
+                Text(text = error!!, color = Color.Red, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
             }
 
-            // Stock List
+            // --- STOCK LIST ---
             LazyColumn(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(portfolio) { stock ->
+                items(portfolioStocks) { stock ->
                     StockCard(stock = stock)
                 }
             }
         }
 
-        // Search Dialog
-        if (showDialog) {
+        // --- SEARCH STOCK DIALOG ---
+        if (showSearchDialog) {
             AlertDialog(
-                onDismissRequest = { showDialog = false },
-                title = { Text("Add Stock") },
+                onDismissRequest = { showSearchDialog = false },
+                title = { Text("Add Stock to Portfolio") },
                 text = {
                     Column {
                         var query by remember { mutableStateOf("") }
@@ -139,7 +157,6 @@ fun StockScreen(
                         )
                         Spacer(modifier = Modifier.height(8.dp))
 
-                        // Search Results List
                         LazyColumn(modifier = Modifier.heightIn(max = 200.dp)) {
                             items(searchResults) { result ->
                                 Text(
@@ -148,7 +165,7 @@ fun StockScreen(
                                         .fillMaxWidth()
                                         .clickable {
                                             viewModel.selectStock(result.symbol, result.name)
-                                            showDialog = false
+                                            showSearchDialog = false
                                         }
                                         .padding(12.dp)
                                 )
@@ -157,7 +174,41 @@ fun StockScreen(
                         }
                     }
                 },
-                confirmButton = { TextButton(onClick = { showDialog = false }) { Text("Close") } }
+                confirmButton = { TextButton(onClick = { showSearchDialog = false }) { Text("Close") } }
+            )
+        }
+
+        // --- NEW PORTFOLIO DIALOG ---
+        if (showNewPortfolioDialog) {
+            var portfolioName by remember { mutableStateOf("") }
+
+            AlertDialog(
+                onDismissRequest = { showNewPortfolioDialog = false },
+                title = { Text("Create New Portfolio") },
+                text = {
+                    OutlinedTextField(
+                        value = portfolioName,
+                        onValueChange = { portfolioName = it },
+                        label = { Text("Portfolio Name") },
+                        singleLine = true,
+                        placeholder = { Text("e.g. Retirement") }
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            if (portfolioName.isNotBlank()) {
+                                viewModel.createNewPortfolio(portfolioName)
+                                showNewPortfolioDialog = false
+                            }
+                        }
+                    ) {
+                        Text("Create")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showNewPortfolioDialog = false }) { Text("Cancel") }
+                }
             )
         }
     }
@@ -172,14 +223,18 @@ fun StockCard(stock: StockEntity) {
     Card(
         colors = CardDefaults.cardColors(containerColor = Color.White),
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp)
     ) {
         Row(
-            modifier = Modifier.padding(16.dp).fillMaxWidth(),
+            modifier = Modifier
+                .padding(16.dp)
+                .fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(text = stock.symbol, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                 Text(text = stock.companyName, fontSize = 12.sp, color = Color.Gray, maxLines = 1)
             }
