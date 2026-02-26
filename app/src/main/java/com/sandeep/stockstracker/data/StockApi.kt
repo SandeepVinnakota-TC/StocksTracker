@@ -21,4 +21,12 @@ interface StockApi {
         @Query("symbol") symbol: String,
         @Query("apikey") apiKey: String = "JRGJHDRMG2PCJ1AY"
     ): StockResponse
+
+    @GET("query")
+    suspend fun getBatchQuotes(
+        @Query("function") function: String = "BATCH_STOCK_QUOTES",
+        @Query("symbols") symbols: String,
+        @Query("apikey") apiKey: String = "JRGJHDRMG2PCJ1AY"
+    ): BatchResponse
+
 }

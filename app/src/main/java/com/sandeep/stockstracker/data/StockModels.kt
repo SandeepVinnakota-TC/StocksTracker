@@ -24,12 +24,13 @@ data class SearchResponse(
     @SerializedName("bestMatches")
     val bestMatches: List<SearchResultDto>? = null,
 
-    // To catch the "Rate Limit" message
+    // Error Fields
     @SerializedName("Note")
     val note: String? = null,
-
     @SerializedName("Information")
-    val information: String? = null
+    val information: String? = null,
+    @SerializedName("Error Message")
+    val errorMessage: String? = null
 )
 
 data class SearchResultDto(
@@ -37,4 +38,18 @@ data class SearchResultDto(
     val symbol: String,
     @SerializedName("2. name")
     val name: String
+)
+
+data class BatchResponse(
+    @SerializedName("Stock Quotes")
+    val stockQuotes: List<StockDto>? = null,
+
+    @SerializedName("Note")
+    val note: String? = null,
+
+    @SerializedName("Information")
+    val information: String? = null,
+
+    @SerializedName("Error Message")
+    val errorMessage: String? = null
 )
