@@ -21,6 +21,10 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import android.widget.Toast
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 
 @Composable
@@ -83,7 +87,8 @@ fun StockScreen(
 
             // --- PORTFOLIO TABS ---
             if (portfolios.isNotEmpty()) {
-                val selectedIndex = portfolios.indexOfFirst { it.id == selectedPortfolioId }.coerceAtLeast(0)
+                val selectedIndex =
+                    portfolios.indexOfFirst { it.id == selectedPortfolioId }.coerceAtLeast(0)
 
                 ScrollableTabRow(
                     selectedTabIndex = selectedIndex,
@@ -125,7 +130,11 @@ fun StockScreen(
             }
 
             if (error != null) {
-                Text(text = error!!, color = Color.Red, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                Text(
+                    text = error,
+                    color = Color.Red,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                )
             }
 
             // --- STOCK LIST ---
@@ -135,11 +144,57 @@ fun StockScreen(
                     .padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(portfolioStocks) { stock ->
-                    StockCard(stock = stock)
+                items(
+                    items = portfolioStocks,
+                    key = { stock -> stock.symbol }
+                ) { stock ->
+
+                    // 1. Create the State
+                    val dismissState = rememberSwipeToDismissBoxState(
+                        confirmValueChange = { dismissValue ->
+                            if (dismissValue == SwipeToDismissBoxValue.EndToStart) {
+                                // 2. Call ViewModel action!
+                                val currentPortfolio = selectedPortfolioId
+                                if (currentPortfolio != null) {
+                                    viewModel.removeStock(stock.symbol, currentPortfolio)
+                                    true // Confirm the swipe
+                                } else {
+                                    false // Don't swipe if we somehow don't have a portfolio
+                                }
+                            } else {
+                                false
+                            }
+                        }
+                    )
+
+                    SwipeToDismissBox(
+                        modifier = Modifier.padding(horizontal = 4.dp),
+                        state = dismissState,
+                        enableDismissFromStartToEnd = false, // Only allow right-to-left swipe
+                        backgroundContent = {
+                            // Red background with the trash icon
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = 4.dp)
+                                    .clip(RoundedCornerShape(12))
+                                    .background(Color(0xFFC00000))
+                                    .padding(horizontal = 20.dp),
+                                contentAlignment = Alignment.CenterEnd
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = "Delete",
+                                    tint = Color.White
+                                )
+                            }
+                        }
+                    ) {
+                        StockCard(stock = stock)
+                    }
                 }
-            }
-        }
+            } // END OF LazyColumn
+        } // END OF Column
 
         // --- SEARCH STOCK DIALOG ---
         if (showSearchDialog) {
@@ -151,7 +206,9 @@ fun StockScreen(
                         var query by remember { mutableStateOf("") }
                         OutlinedTextField(
                             value = query,
-                            onValueChange = { query = it; viewModel.onSearchQueryChange(it) },
+                            onValueChange = {
+                                query = it; viewModel.onSearchQueryChange(it)
+                            },
                             label = { Text("Symbol") },
                             singleLine = true
                         )
@@ -164,7 +221,10 @@ fun StockScreen(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .clickable {
-                                            viewModel.selectStock(result.symbol, result.name)
+                                            viewModel.selectStock(
+                                                result.symbol,
+                                                result.name
+                                            )
                                             showSearchDialog = false
                                         }
                                         .padding(12.dp)
@@ -174,7 +234,9 @@ fun StockScreen(
                         }
                     }
                 },
-                confirmButton = { TextButton(onClick = { showSearchDialog = false }) { Text("Close") } }
+                confirmButton = {
+                    TextButton(onClick = { showSearchDialog = false }) { Text("Close") }
+                }
             )
         }
 
@@ -211,8 +273,10 @@ fun StockScreen(
                 }
             )
         }
-    }
-}
+
+    } // END OF Scaffold
+} // END OF StockScreen
+
 
 @Composable
 fun StockCard(stock: StockEntity) {
@@ -221,11 +285,10 @@ fun StockCard(stock: StockEntity) {
     val arrow = if (isDrop) "↓" else "↑"
 
     Card(
+        shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White),
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 4.dp)
+        modifier = Modifier.fillMaxWidth()
     ) {
         Row(
             modifier = Modifier
@@ -236,11 +299,25 @@ fun StockCard(stock: StockEntity) {
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(text = stock.symbol, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                Text(text = stock.companyName, fontSize = 12.sp, color = Color.Gray, maxLines = 1)
+                Text(
+                    text = stock.companyName,
+                    fontSize = 12.sp,
+                    color = Color.Gray,
+                    maxLines = 1
+                )
             }
             Column(horizontalAlignment = Alignment.End) {
-                Text(text = "$${stock.price}", fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
-                Text(text = "$arrow ${stock.changePercent}", fontSize = 14.sp, color = cardColor, fontWeight = FontWeight.Bold)
+                Text(
+                    text = "$${stock.price}",
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "$arrow ${stock.changePercent}",
+                    fontSize = 14.sp,
+                    color = cardColor,
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
     }
