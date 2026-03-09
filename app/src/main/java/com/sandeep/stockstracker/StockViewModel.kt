@@ -153,6 +153,23 @@ class StockViewModel @Inject constructor(
         }
     }
 
+    fun refreshStock(symbol: String) {
+        if (requestsLeft <= 0) {
+            toastMessage = "Daily limit reached. Try again tomorrow."
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                repository.refreshSingleStock(symbol)
+                incrementUsage()
+                toastMessage = "$symbol refreshed!"
+            } catch (e: Exception) {
+                handleError(e)
+            }
+        }
+    }
+
     fun refreshPortfolio() {
         val currentList = portfolio.value
         if (currentList.isEmpty()) return
