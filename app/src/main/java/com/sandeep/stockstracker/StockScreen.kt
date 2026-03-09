@@ -1,31 +1,31 @@
 package com.sandeep.stockstracker
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.sandeep.stockstracker.data.StockEntity
+import android.widget.Toast
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import android.widget.Toast
-import androidx.compose.foundation.background
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalContext
 
 @Composable
 fun StockScreen(
@@ -149,20 +149,24 @@ fun StockScreen(
                     key = { stock -> stock.symbol }
                 ) { stock ->
 
-                    // 1. Create the State
+                    // 1. Create the State (Handles both Left and Right Swipes)
                     val dismissState = rememberSwipeToDismissBoxState(
                         confirmValueChange = { dismissValue ->
-                            if (dismissValue == SwipeToDismissBoxValue.EndToStart) {
-                                // 2. Call ViewModel action!
-                                val currentPortfolio = selectedPortfolioId
-                                if (currentPortfolio != null) {
-                                    viewModel.removeStock(stock.symbol, currentPortfolio)
-                                    true // Confirm the swipe
-                                } else {
-                                    false // Don't swipe if we somehow don't have a portfolio
+                            when (dismissValue) {
+                                SwipeToDismissBoxValue.EndToStart -> {
+                                    // DELETE: Right to Left
+                                    val currentPortfolio = selectedPortfolioId
+                                    if (currentPortfolio != null) {
+                                        viewModel.removeStock(stock.symbol, currentPortfolio)
+                                        true // Confirm the swipe
+                                    } else false
                                 }
-                            } else {
-                                false
+                                SwipeToDismissBoxValue.StartToEnd -> {
+                                    // REFRESH: Left to Right
+                                    viewModel.refreshStock(stock.symbol)
+                                    false // Bounce back
+                                }
+                                else -> false
                             }
                         }
                     )
@@ -170,31 +174,48 @@ fun StockScreen(
                     SwipeToDismissBox(
                         modifier = Modifier.padding(horizontal = 4.dp),
                         state = dismissState,
-                        enableDismissFromStartToEnd = false, // Only allow right-to-left swipe
+                        enableDismissFromStartToEnd = true, // ALLOW left-to-right swipe
                         backgroundContent = {
-                            // Red background with the trash icon
+
+                            val backgroundColor = when (dismissState.targetValue) {
+                                SwipeToDismissBoxValue.EndToStart -> Color(0xFFC00000)
+                                SwipeToDismissBoxValue.StartToEnd -> Color(0xFF2196F3)
+                                else -> Color.Transparent
+                            }
+
+                            val alignment = when (dismissState.targetValue) {
+                                SwipeToDismissBoxValue.StartToEnd -> Alignment.CenterStart
+                                else -> Alignment.CenterEnd
+                            }
+
+                            val icon = when (dismissState.targetValue) {
+                                SwipeToDismissBoxValue.StartToEnd -> Icons.Default.Refresh
+                                else -> Icons.Default.Delete
+                            }
+
                             Box(
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .padding(horizontal = 4.dp)
-                                    .clip(RoundedCornerShape(12))
-                                    .background(Color(0xFFC00000))
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(backgroundColor)
                                     .padding(horizontal = 20.dp),
-                                contentAlignment = Alignment.CenterEnd
+                                contentAlignment = alignment
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.Delete,
-                                    contentDescription = "Delete",
-                                    tint = Color.White
-                                )
+                                if (dismissState.targetValue != SwipeToDismissBoxValue.Settled) {
+                                    Icon(
+                                        imageVector = icon,
+                                        contentDescription = "Action",
+                                        tint = Color.White
+                                    )
+                                }
                             }
                         }
                     ) {
-                        StockCard(stock = stock)
+                        StockCard(stock = stock) // The squiggly red line will vanish now!
                     }
                 }
-            } // END OF LazyColumn
-        } // END OF Column
+            } // END LazyColumn
+        } // END Column
 
         // --- SEARCH STOCK DIALOG ---
         if (showSearchDialog) {
@@ -273,11 +294,10 @@ fun StockScreen(
                 }
             )
         }
+    } // END Scaffold
+} // END StockScreen
 
-    } // END OF Scaffold
-} // END OF StockScreen
-
-
+// --- STOCK CARD (Must be completely outside StockScreen) ---
 @Composable
 fun StockCard(stock: StockEntity) {
     val isDrop = stock.price < stock.previousClose
