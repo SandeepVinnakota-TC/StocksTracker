@@ -46,11 +46,3 @@ The app follows the **Clean Architecture** principles using the MVVM pattern:
     * Replace the key in `StockApi.kt` or `StockConsoleApp.kt`.
 4.  **Run the App:**
     * Build and run on an Emulator or Physical Device.
-
-## 📸 Screenshots
-
-*(You can add screenshots here later by dragging images into your repo)*
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
