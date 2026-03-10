@@ -57,6 +57,13 @@ class StockViewModel @Inject constructor(
         private set
     var apiCallsMade by mutableIntStateOf(0)
         private set
+    // The SET: Keeps track of unique symbols the user has added
+    private val _recentSearches = mutableSetOf<String>()
+    var recentSearchesList by mutableStateOf<List<String>>(emptyList())
+        private set
+
+    // The MAP: Temporarily stores the price of stocks we've already looked up
+    val priceCache = mutableMapOf<String, Double>()
 
     val requestsLeft: Int
         get() = (25 - apiCallsMade).coerceAtLeast(0)
@@ -141,6 +148,11 @@ class StockViewModel @Inject constructor(
 
                 // Add to the specific portfolio
                 repository.addStockToPortfolio(symbol, name, currentPortfolioId)
+
+                _recentSearches.add(symbol) // Adds to the Set (automatically ignores duplicates!)
+                recentSearchesList = _recentSearches.toList() // Updates UI
+
+                priceCache[symbol] = 0.0 // Placeholder until the API returns the real price
 
                 // Fetch the price immediately so it doesn't stay at $0.0!
                 repository.refreshSingleStock(symbol)
